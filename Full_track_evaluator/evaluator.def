@@ -1,0 +1,46 @@
+Bootstrap: docker
+From: python:3.13-slim
+Stage: build
+
+%files
+    ./config.py /Full_track_evaluator/config.py
+    ./data_loader.py /Full_track_evaluator/data_loader.py
+    ./evaluator_content_handler.py /Full_track_evaluator/evaluator_content_handler.py 
+    ./evaluator_metrics_calculator.py /Full_track_evaluator/evaluator_metrics_calculator.py
+    ./evaluator_RestAPI.py /Full_track_evaluator/evaluator_RestAPI.py
+
+%environment
+    export APPTAINER_NO_MOUNT="home,tmp,proc,sys,dev"
+    export LC_ALL=C
+    export PATH="/opt/conda/bin:$PATH"
+    export LD_LIBRARY_PATH="/opt/conda/lib:$LD_LIBRARY_PATH"
+    
+%post
+    # Install system packages and dependencies
+    echo "Installing system dependencies..."
+    apt-get update && \
+    apt-get install -y --no-install-recommends python3-pip bzip2 ca-certificates && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+    echo "Installing Python dependencies..."
+    python -m pip install --upgrade pip
+    python -m pip install --no-cache-dir numpy tqdm pandas msgpack scipy pyBigWig requests fastparquet
+    
+    # Set permissions to access all directories
+    echo "Setting permissions for directories and script..."
+    chmod -R 755 /Full_track_evaluator/
+
+%runscript
+    exec python3 /Full_track_evaluator/evaluator_RestAPI.py "$@"
+
+%startscript
+    exec python3 /Full_track_evaluator/evaluator_RestAPI.py "$@"
+
+%labels
+    Track Evaluator
+    Date 2026-01-08
+
+%help
+    This is a container for a ATAC-seq Track Evaluator. It includes:
+    - Evaluator API script
+    - Evaluator utility script with helper functions.

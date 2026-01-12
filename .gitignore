@@ -8,6 +8,9 @@
 __pycache__/
 *.pyc
 
+# Large BigWig
+*.bigWig
+
 # Large predictions directories
 *test*
 *pred*

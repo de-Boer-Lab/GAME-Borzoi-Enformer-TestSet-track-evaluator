@@ -2,11 +2,10 @@
 
 import os
 import json
-import msgpack
 from collections import Counter
 import functools
 import pandas as pd
-from config import EVALUATOR_INPUT_PATH, input_file
+from config import EVALUATOR_INPUT_PATH
 
 class DuplicateKeysError(ValueError):
     """Raised when duplicate keys are found in a JSON object."""

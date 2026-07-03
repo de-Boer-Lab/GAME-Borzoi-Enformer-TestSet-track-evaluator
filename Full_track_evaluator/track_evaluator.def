@@ -1,6 +1,5 @@
 Bootstrap: docker
 From: python:3.13-slim
-Stage: build
 
 %files
     ./config.py /Full_track_evaluator/config.py
@@ -37,8 +36,9 @@ Stage: build
     exec python3 /Full_track_evaluator/evaluator_RestAPI.py "$@"
 
 %labels
-    Track Evaluator
-    Date 2026-01-08
+    Author "Ishika Luthra"
+    game_schema_version "1.0"
+    Description "ATAC-seq Track Evaluator using GAME Framework"
 
 %help
     This is a container for a ATAC-seq Track Evaluator. It includes:

@@ -11,7 +11,7 @@ This evaluator:
 - Supports both JSON and MessagePack data formats
 
 
-To get started with running the pre-built container, download the container and data from the following link: <LINK>
+To get started with running the pre-built container, download the container and data from Hugging Face: https://huggingface.co/datasets/deBoerLab/Track_Evaluator_Borzoi_Enformer_TestSet
 
 ### Running with Container
 

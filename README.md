@@ -2,6 +2,13 @@
 
 This Evaluator benchmarks track predictions against measured DNase-seq signal. It requests chromatin accessibility track predictions for K562 cell type (*homo_sapiens*) and calculates Pearson correlation and Jensen-Shannon divergence as metrics of Predictor accuracy.
 
+## Important Links
+
+- Main GAME Repository: [de-Boer-Lab/Genomic-API-for-Model-Evaluation](https://github.com/de-Boer-Lab/Genomic-API-for-Model-Evaluation)
+- GAME Documentation: [ReadTheDocs](https://genomic-api-for-model-evaluation-documentation.readthedocs.io)
+- Pre-built Evaluator container image and data: [Hugging Face](https://huggingface.co/datasets/deBoerLab/Track_Evaluator_Borzoi_Enformer_TestSet)
+- List of all [GAME Modules](https://github.com/de-Boer-Lab/GAME_modules)
+
 ## Overview
 
 This evaluator:
@@ -11,7 +18,7 @@ This evaluator:
 - Supports both JSON and MessagePack data formats
 
 
-To get started with running the pre-built container, download the container and data from Hugging Face: https://huggingface.co/datasets/deBoerLab/Track_Evaluator_Borzoi_Enformer_TestSet
+To get started with running the pre-built container, download the container and data from Hugging Face (see [Important Links](#important-links) above).
 
 ### Running with Container
 

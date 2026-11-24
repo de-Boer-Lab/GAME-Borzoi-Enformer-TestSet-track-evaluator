@@ -154,7 +154,7 @@ def create_json_from_parquet():
     # Validate evaluator input file exists
     if not os.path.exists(EVALUATOR_INPUT_PATH):
         print(f"ERROR: Evaluator input file '{EVALUATOR_INPUT_PATH}' not found.")
-        raise FileNotFoundError(f"Evaluator input file not found: {EVALUATOR_INPUT_PATHQ}")
+        raise FileNotFoundError(f"Evaluator input file not found: {EVALUATOR_INPUT_PATH}")
 
     #Code can be altered for specific needs
     try:

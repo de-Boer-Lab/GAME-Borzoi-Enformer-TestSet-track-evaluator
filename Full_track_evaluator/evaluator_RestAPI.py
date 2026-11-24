@@ -76,7 +76,7 @@ def run_evaluator(predictor_ip, predictor_port, output_dir):
         
     # Check sequence counts before saving
     for i, task in enumerate(response_payload.get("prediction_tasks", []), start=1):
-        preds = task.get("predictions", [])
+        preds = task.get("predictions", {})
         if len(preds) != total_sequences:
             print(f"Warning: Task {i} ('{task.get('name')}') has {len(preds)} predictions, but {total_sequences} sequences were sent to the Predictor.")
     
@@ -103,7 +103,7 @@ def run_evaluator(predictor_ip, predictor_port, output_dir):
                 print(f"Warning: Task {i} ('{task.get('name')}') has {len(preds)} predictions, but {total_sequences} sequences were sent to the Predictor.")
                 all_lengths_match = False
         if all_lengths_match:    
-            evaluator_metrics_calculator.calculate_and_save_metrics(saved_predictions_path, output_dir, total_sequences)
+            evaluator_metrics_calculator.calculate_and_save_metrics(saved_predictions_path, output_dir)
         else:
             print("Skipping metric calculation because not all sequences got predictions.")
     else:

@@ -31,6 +31,18 @@ def evaluate_track_predictions(
         correlation_details (dict): Dictionary containing 'pearson_r' (float, None, 0.0), Jensen-Shannon distance, and task metadata ("task_name", "task_type", "cell_type_actual")
     """
     # Extract metadata from single task data
+
+    def _nan_result(reason):
+        print(reason)
+        return {
+            'task_name': task_name,
+            'task_type': task_type_actual,
+            'cell_type_actual': cell_type_actual,
+            'pearson_r': "NaN",
+            'Jensen-Shannon distance': "NaN"
+        }
+
+    
     print(f"\n--- Extracting prediction_task metadata ---")
     task_name = single_task_data.get("name")
     task_type_actual = single_task_data.get("type_actual")
@@ -39,12 +51,15 @@ def evaluate_track_predictions(
 
     
     scale_prediction_actual = single_task_data.get("scale_prediction_actual", None)
+    #how many bp of the FIRST predicted bin fall upstream of the requested sequence.
+    # Absent means the first bin starts exactly at bp 0 of the sequence.
     trim_upstream_dict = single_task_data.get("trim_upstream", None)
-    pearson_r_value = None # If there's an error, default to None
+
+    if not bin_size:
+        return _nan_result("No bin_size was returned by the Predictor -> cannot expand bins")
     
     if "error" in predictions_dict:
-        print("No predictions were returned for this task -> Skipping evaluation calculation")
-        return None
+        return _nan_result("No predictions were returned for this task -> Skipping evaluation calculation")
 
     # --- Data Validation and processing ---
     print("--- Validating data ---")
@@ -61,6 +76,8 @@ def evaluate_track_predictions(
         # Proceed with calculation if checks pass
         # Create DataFrame from Predictions
         print("--- Creating predictions_df ---")
+        # One row per sequence: 'region' is the sequence ID (e.g. "chr1:1000-2000"),
+        # 'Predicted_Value' is that sequence's array of predictions.
         predictions_df = pd.DataFrame(list(predictions_dict.items()), columns=['region', 'Predicted_Value'])
         # check for NA in the predictions: a whole-cell None/NaN OR a NaN element inside a region's array
         na_mask = predictions_df['Predicted_Value'].apply(
@@ -68,10 +85,10 @@ def evaluate_track_predictions(
         )
         na_rows = predictions_df[na_mask]
         if not na_rows.empty:
-            print(f"NA values were found in the predictions ({len(na_rows)} region(s)), skipping evaluation")
-            return None
+            return _nan_result(f"NA values were found in the predictions ({len(na_rows)} region(s)), skipping evaluation")
 
         if trim_upstream_dict:
+            # Attach each sequence's upstream offset as a column, matched by region ID.
             trim_upstream_df = pd.DataFrame(list(trim_upstream_dict.items()), columns=['region', 'Trim Upstream Value'])
             predictions_df = pd.merge(predictions_df, trim_upstream_df, on = 'region', how = "left")
             predictions_df['Trim Upstream Value'] = predictions_df['Trim Upstream Value'].fillna(0)
@@ -79,16 +96,16 @@ def evaluate_track_predictions(
 
             all_positive = (predictions_df['Trim Upstream Value'] >= 0).all()
             if all_positive == False:
-                raise ValueError("Trim Upstream values are negative")
+                return _nan_result("Trim Upstream values are negative")
         else:
+            # No trim_upstream returned at all: every sequence is bin-aligned at bp 0.
             predictions_df['Trim Upstream Value'] = 0
-        
-
-        if scale_prediction_actual == 'linear':
-            print("Measured scale matches Predictor scale.")
-        elif scale_prediction_actual is None or scale_prediction_actual == 'log':
-            return None
-
+    
+        #Bigwig is linear scale so the Predictor should have returned linear otherwise we can't complete the evaluation
+        if scale_prediction_actual != 'linear':
+            return _nan_result(f"WARNING: task '{task_name}' reported scale_prediction_actual="
+                               f"{scale_prediction_actual!r}; measured data is linear -- cannot compare")
+        print("Measured scale matches Predictor scale.")
 
         bigwig_file = pyBigWig.open(MEASURED_DATA_PATH)
         sequences = pd.read_parquet(EVALUATOR_INPUT_PATH)
@@ -97,41 +114,57 @@ def evaluate_track_predictions(
             chrom = sequences['chrom'].iloc[f]
             start = sequences['start'].iloc[f]
             end = sequences['end'].iloc[f]
+            # values() is 0-based half-open, matching BED and the parquet, so this
+            # returns exactly (end - start) values -- one per bp of the sequence.
             measurements = bigwig_file.values(chrom, start, end)
             #Mask missing values in the BigWig with 0
             measurements = np.nan_to_num(measurements, nan=0.0)
             all_measurements.append(measurements)
 
         sequences['measurements'] = all_measurements
-        # Map region -> measurement so we align by name, not by position.
-        # KeyError here (a prediction region absent from sequences) is intentional: fail loud.
+        
+
+        # A prediction region absent from the parquet raises KeyError, which is caught
+        # below and disqualifies the task with a NaN row rather than crashing the run.
         measurements_by_region = dict(zip(sequences['region'], sequences['measurements']))
         pearson_r_list = []
         jsd_list = []
         for i in range(0, len(predictions_df)):
+            region_i = predictions_df['region'].iloc[i]
             try:
-                region_i = predictions_df['region'].iloc[i]
+                
+                # Measured signal for THIS region
                 measured = measurements_by_region[region_i]
                 binned_predictions_current = predictions_df['Predicted_Value'].iloc[i]
                 num_repeats = bin_size
-
+                # Expand bins to bp level: each bin's value is repeated bin_size times.
+                # A conformant Predictor returns ceil(seq_len / bin_size) bins, so this
+                # is always >= the sequence length -- never shorter.
                 expanded_prediction_bp_level = [element for element in binned_predictions_current for _ in range(num_repeats)]
 
                 #Once you expand the prediction to bp level, crop to match sequence length using trim upstream
+                # Case A: first bin is already aligned to bp 0, so only the tail overhangs.
                 if predictions_df['Trim Upstream Value'].iloc[i] == 0:
 
                     length_expanded_predictions = len(expanded_prediction_bp_level)
                     length_measuremnts = len(measured)
+                    # How much longer the expanded track is than the sequence, i.e.
+                    # the partial final bin that runs past the end.
                     trim_downstream = length_expanded_predictions - length_measuremnts
 
                     if trim_downstream == 0:
+                        # Sequence length divides evenly into bins; nothing to cut.
                         expanded_prediction_bp_level_trimmed = expanded_prediction_bp_level
                     else:
+                        # Drop the overhang from the end only.
                         expanded_prediction_bp_level_trimmed = expanded_prediction_bp_level[:-trim_downstream]
-
+                
+                # Case B: the first bin starts upstream of the sequence, so cut the
+                # front first, THEN recompute how much tail is left over.
                 else:
                     trim_upstream = predictions_df['Trim Upstream Value'].iloc[i]
                     expanded_prediction_bp_level_trimmed_upstream = expanded_prediction_bp_level[trim_upstream:]
+                    # Recomputed against the already-shortened array, not the original.
                     trim_downstream = len(expanded_prediction_bp_level_trimmed_upstream) - len(measured)
 
                     if trim_downstream == 0:
@@ -154,17 +187,30 @@ def evaluate_track_predictions(
                     jsd_list.append(float(jsd))
 
                 else:
-                    print(f"WARNING: Length of predictions is not as expected so evaluation could not be completed")
 
-            except ValueError as e:
-                print(f"ValueError during Pearson correlation calculation for task: '{task_name}': {e}")
+                    return _nan_result(f"ERROR: '{region_i}' -- expanded predictions are "
+                        f"{len(expanded_prediction_bp_level_trimmed)} bp but the sequence is "
+                        f"{len(measured)} bp. Disqualifying task '{task_name}'.")
+
+            except (ValueError, KeyError) as e:
+                return _nan_result(f"{type(e).__name__} for region '{region_i}' in task '{task_name}': {e}. Disqualifying task.")
 
     if len(pearson_r_list) != 0 or len(jsd_list) != 0:
         correlation_details = {
             'task_name': task_name, 
             'task_type': task_type_actual,
             'cell_type_actual': cell_type_actual,
+            # Pearson: a flat prediction has zero variance so pearsonr returns NaN.
+            # That is a real prediction with no correlation structure, so the region
+            # scores 0.0 (handled per-region above) and still counts toward the mean.
             'pearson_r': np.mean(pearson_r_list),
+            # JSD: constancy is fine here -- a flat vector normalises to a uniform
+            # distribution and gives a valid divergence. JSD only returns NaN when a
+            # vector is ALL ZEROS, since normalising it divides by zero. That means a
+            # region with no signal at all, where the metric is undefined rather than
+            # degenerate, so one such region disqualifies the task's JSD.
+            # NOTE: nan_to_num turns missing BigWig data into zeros, so a fully
+            # unmappable region will trip this through no fault of the Predictor.
             'Jensen-Shannon distance': np.mean(jsd_list) if not np.any(np.isnan(jsd_list)) else "NaN"
         }
     else:
@@ -179,8 +225,7 @@ def evaluate_track_predictions(
 
     return correlation_details
     
-def calculate_and_save_metrics(saved_predictions_path, output_dir, number_of_sequences):
-    print(number_of_sequences)
+def calculate_and_save_metrics(saved_predictions_path, output_dir):
     try:
         if os.path.exists(saved_predictions_path):
             print("----- Starting Evaluation Calculation and Saving as CSV -----")
@@ -206,7 +251,10 @@ def calculate_and_save_metrics(saved_predictions_path, output_dir, number_of_seq
                 predictor_name = predictor_name_base.replace(" ", "_").replace("/", "_") # Sanitize spaces and slashes for filenames, add underscores
 
                 #extract model bin size
-                bin_size = predictions_file_content.get("bin_size", 1)
+                bin_size = predictions_file_content.get("bin_size", None)
+                if bin_size is None:
+                    print(f"No bin size was returned by Predictor -- every task will be disqualified")
+
                 if (
                     "prediction_tasks" not in predictions_file_content or
                     # Also flag cases in case prediction_tasks key is returned empty
@@ -222,16 +270,7 @@ def calculate_and_save_metrics(saved_predictions_path, output_dir, number_of_seq
                         if not isinstance(single_task_data_dict, dict):
                             print(f"WARNING: Task item at index {task_index} is not a dictionary. Skipping!")
                             continue
-                        
-                        # Extract metadata from this task
-                        task_type_actual = single_task_data_dict.get("type_actual")
-                        predicted_cell_type = single_task_data_dict.get("cell_type_actual")
-                        # We also want to extract the cell_type_requested to map it to measured_value_columns_map
-                        requested_cell_type = single_task_data_dict.get("cell_type_requested")
-                        
-                        # Find the corresponding measured data column from the map
-                        measured_col_for_task = 'measurements'
-                        
+                                
                         print(f"\nProcessing task {task_index+1}")
                         prediction_task_data_nopredictions = [{k: v for k, v in single_task_data_dict.items() if k not in ("predictions", "trim_upstream")}]
                         # Call the correlation calculation function
@@ -245,8 +284,6 @@ def calculate_and_save_metrics(saved_predictions_path, output_dir, number_of_seq
                             jsd_value = task_correlation_dict.get('Jensen-Shannon distance')
                             # Get UTC timestamp for predictor_name
                             timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S.%f")
-                            # And append it to the predictor_name
-                            predictor_identifier = f"{predictor_name_base}_{task_index}_{timestamp}" if predictor_name_base else f"UnknownPredictor_{task_index}_{timestamp}"
                             description = "DNase Track Request (K562)"
                             all_task_correlation_results.append({
                                 "evaluator_name": EVALUATOR_NAME,
@@ -284,7 +321,7 @@ def calculate_and_save_metrics(saved_predictions_path, output_dir, number_of_seq
                         print("Created a new summary CSV file")
                     print(f"Saved correlation summary to {correlation_summary_filepath}!")
                 except IOError as e:
-                    print("\nNo correlation resuls were saved!")
+                    print("\nNo correlation results were saved!")
 
         else:
             print("Evaluator run did not complete successfully.")

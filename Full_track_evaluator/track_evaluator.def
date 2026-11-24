@@ -38,9 +38,38 @@ From: python:3.13-slim
 %labels
     Author "Ishika Luthra"
     game_schema_version "1.0"
-    Description "ATAC-seq Track Evaluator using GAME Framework"
+    Description "DNase-seq Track Evaluator using GAME Framework"
 
 %help
-    This is a container for a ATAC-seq Track Evaluator. It includes:
-    - Evaluator API script
-    - Evaluator utility script with helper functions.
+    Full Track Evaluator -- GAME Framework
+
+    Benchmarks bp-resolution track predictions against measured DNase signal
+    (ENCFF972GVB, K562) on the 13 genomic regions held out as TEST data by BOTH
+    Enformer and Borzoi, so neither model has seen them during training. Regions
+    range from ~9.7 kb to ~23 Mb; the variable length is intentional and exercises
+    how a Predictor handles sequences longer or shorter than its native input size.
+
+    Reports two metrics per prediction task: Pearson r and Jensen-Shannon distance.
+
+    REQUIRED BIND MOUNTS
+        -B /path/to/evaluator_data:/evaluator_data
+            Must contain:
+              enformer_borzoi_test_seqs.parquet   sequences + coordinates
+              ENCFF972GVB.bigWig                  measured DNase signal
+        -B /path/to/output:/output
+            Where the raw predictions JSON and the summary CSV are written.
+
+    USAGE
+        apptainer run \
+            -B /path/to/evaluator_data:/evaluator_data \
+            -B /path/to/output:/output \
+            track_evaluator.sif <predictor_ip> <predictor_port> /output
+
+    OUTPUT
+        <EVALUATOR_NAME>_predictions_from_<PREDICTOR_NAME>.json
+        evaluation_summary_<EVALUATOR_NAME>.csv   (appended to across runs)
+
+    NOTES
+        The Predictor must return linear-scale predictions and a bin_size; the
+        evaluation is skipped otherwise. A task that cannot be scored is written
+        to the CSV with value=NaN rather than omitted.
